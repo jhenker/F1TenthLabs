@@ -25,19 +25,19 @@ private:
     rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr drive_pub_;
     rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr marker_pub_;
 
-    double lookahead_distance_ = 4.0;
-    double max_steering_angle_ = 0.5;
-    double max_speed_ = 1.5;
-    string file_name = "wall_follow_1.csv";
+    double lookahead_distance_ = 1.85;
+    double max_steering_angle_ = 0.4;
+    double max_speed_ = 8;
+    string file_name = "gap_follow_1.csv";
 
     void load_waypoints(const string &filepath)
     {
-	RCLCPP_INFO(this->get_logger(), "About to Loading File");
+        // RCLCPP_INFO(this->get_logger(), "About to Loading File");
         ifstream file(filepath);
         string line;
         while (getline(file, line))
         {
-	    RCLCPP_INFO(this->get_logger(), "Loading File");
+            // RCLCPP_INFO(this->get_logger(), "Loading File");
             stringstream ss(line);
             string token;
             vector<double> waypoint;
@@ -52,48 +52,42 @@ private:
 
     void visualize_target_waypoint(double x, double y)
     {
-        visualization_msgs::msg::Marker marker;
-        //marker.header.frame_id = "base_link";
-        marker.header.stamp = this->now();
-        marker.ns = "pure_pursuit";
-        marker.id = 0;
-        marker.type = visualization_msgs::msg::Marker::SPHERE;
-        marker.action = visualization_msgs::msg::Marker::ADD;
-        marker.pose.position.x = x;
-        marker.pose.position.y = y;
-        marker.pose.position.z = 0.0;
-        marker.pose.orientation.x = 0.0;
-        marker.pose.orientation.y = 0.0;
-        marker.pose.orientation.z = 0.0;
-        marker.pose.orientation.w = 1.0;
-        marker.scale.x = 0.5;
-        marker.scale.y = 0.5;
-        marker.scale.z = 0.5;
-        marker.color.a = 1.0;
-        marker.color.r = 0.0;
-        marker.color.g = 1.0;
-        marker.color.b = 0.0;
-        marker_pub_->publish(marker);
+        // visualization_msgs::msg::Marker marker;
+        auto marker = std::make_unique<visualization_msgs::msg::Marker>();
+        marker->header.frame_id = "map";
+        marker->header.stamp = this->now();
+        marker->ns = "pure_pursuit";
+        marker->id = 0;
+        marker->type = visualization_msgs::msg::Marker::SPHERE;
+        marker->action = visualization_msgs::msg::Marker::ADD;
+        marker->pose.position.x = x;
+        marker->pose.position.y = y;
+        marker->pose.position.z = 0.0;
+        marker->pose.orientation.x = 0.0;
+        marker->pose.orientation.y = 0.0;
+        marker->pose.orientation.z = 0.0;
+        marker->pose.orientation.w = 1.0;
+        marker->scale.x = 0.5;
+        marker->scale.y = 0.5;
+        marker->scale.z = 0.5;
+        marker->color.a = 1.0;
+        marker->color.r = 1.0;
+        marker->color.g = 0.0;
+        marker->color.b = 1.0;
+        marker_pub_->publish(std::move(marker));
     }
 
     void pose_callback(const nav_msgs::msg::Odometry::SharedPtr pose_msg)
-    // void pose_callback(const rclcpp::Subscription<const geometry_msgs::msg::PoseStamped>::SharedPtr pose_msg)
-    // void pose_callback(const std::shared_ptr<const geometry_msgs::msg::PoseStamped_<std::allocator<void> >> pose_msg)
     {
-        if (waypoints.empty())
-        {
-            RCLCPP_WARN(this->get_logger(), "No waypoints loaded.");
-            return;
-        }
-
         double robot_x = pose_msg->pose.pose.position.x;
         double robot_y = pose_msg->pose.pose.position.y;
 
-        double min_distance = numeric_limits<double>::max();
+        // Find the closest waypoint to the robot
+        double min_distance = std::numeric_limits<double>::max();
         int closest_waypoint_index = -1;
         for (size_t i = 0; i < waypoints.size(); ++i)
         {
-            double distance = sqrt(pow(waypoints[i][0] - robot_x, 2) + pow(waypoints[i][1] - robot_y, 2));
+            double distance = std::hypot(waypoints[i][0] - robot_x, waypoints[i][1] - robot_y);
             if (distance < min_distance)
             {
                 min_distance = distance;
@@ -101,35 +95,63 @@ private:
             }
         }
 
-        int lookahead_index = closest_waypoint_index;
-        for (size_t i = closest_waypoint_index; i < waypoints.size(); ++i)
+        // Ensure valid closest waypoint index
+        if (closest_waypoint_index == -1)
         {
-            double distance = sqrt(pow(waypoints[i][0] - robot_x, 2) + pow(waypoints[i][1] - robot_y, 2));
-            if (distance > lookahead_distance_)
+            RCLCPP_WARN(this->get_logger(), "No valid closest waypoint found.");
+            return;
+        }
+
+        // Find the lookahead waypoint using interpolation
+        int lookahead_index = closest_waypoint_index;
+        double cumulative_distance = 0.0;
+        double target_distance = lookahead_distance_;
+        double segment_distance = 0.0;
+
+        for (size_t i = closest_waypoint_index; i < waypoints.size() - 1; ++i)
+        {
+            segment_distance = std::hypot(waypoints[i + 1][0] - waypoints[i][0], waypoints[i + 1][1] - waypoints[i][1]);
+            if (cumulative_distance + segment_distance > target_distance)
             {
                 lookahead_index = i;
                 break;
             }
+            cumulative_distance += segment_distance;
         }
 
-        if (lookahead_index == -1)
+        if (segment_distance == 0.0)
         {
-            RCLCPP_WARN(this->get_logger(), "No valid lookahead waypoint found.");
+            RCLCPP_WARN(this->get_logger(), "Segment distance is zero, cannot interpolate.");
             return;
         }
 
-        double lookahead_x = waypoints[lookahead_index][0];
-        double lookahead_y = waypoints[lookahead_index][1];
+        // Calculate interpolation ratio
+        double remaining_distance = target_distance - cumulative_distance;
+        double ratio = remaining_distance / segment_distance;
+
+        double lookahead_x = waypoints[lookahead_index][0] + ratio * (waypoints[lookahead_index + 1][0] - waypoints[lookahead_index][0]);
+        double lookahead_y = waypoints[lookahead_index][1] + ratio * (waypoints[lookahead_index + 1][1] - waypoints[lookahead_index][1]);
+
+        // Transform the lookahead point to the robot's coordinate frame
+        tf2::Quaternion q(
+            pose_msg->pose.pose.orientation.x,
+            pose_msg->pose.pose.orientation.y,
+            pose_msg->pose.pose.orientation.z,
+            pose_msg->pose.pose.orientation.w);
+        tf2::Matrix3x3 m(q);
+        double roll, pitch, yaw;
+        m.getRPY(roll, pitch, yaw);
 
         double dx = lookahead_x - robot_x;
         double dy = lookahead_y - robot_y;
-        double heading = pose_msg->pose.pose.orientation.z; //MIGHT NEED TO NOT BE QUATERNIAN
-        double transformed_x = cos(heading) * dx + sin(heading) * dy;
-        double transformed_y = -sin(heading) * dx + cos(heading) * dy;
+        double transformed_x = std::cos(yaw) * dx + std::sin(yaw) * dy;
+        double transformed_y = -std::sin(yaw) * dx + std::cos(yaw) * dy;
 
-        double curvature = 2 * transformed_y / pow(lookahead_distance_, 2);
-        double steering_angle = atan(curvature);
+        // Calculate the curvature and the steering angle
+        double curvature = 2 * transformed_y / std::pow(lookahead_distance_, 2);
+        double steering_angle = std::atan(curvature);
 
+        // Clamp the steering angle to the maximum limits
         if (steering_angle > max_steering_angle_)
         {
             steering_angle = max_steering_angle_;
@@ -139,20 +161,32 @@ private:
             steering_angle = -max_steering_angle_;
         }
 
+        // Adjust speed based on steering angle
+        double cur_speed = max_speed_;
+        if (std::abs(steering_angle) >= 0.3)
+        {
+            cur_speed = 0.8;
+        }
+        else if (std::abs(steering_angle) >= 0.2)
+        {
+            cur_speed = 1.5;
+        }
+
+        // Publish the drive message
         ackermann_msgs::msg::AckermannDriveStamped drive_msg;
         drive_msg.drive.steering_angle = steering_angle;
-        drive_msg.drive.speed = max_speed_;
+        drive_msg.drive.speed = cur_speed;
         drive_pub_->publish(drive_msg);
 
-        visualize_target_waypoint(transformed_x, transformed_y);
+        visualize_target_waypoint(lookahead_x, lookahead_y);
     }
 
 public:
     PurePursuit() : Node("pure_pursuit_node")
     {
-        this->declare_parameter("lookahead_distance", 2.0);
-        this->declare_parameter("max_steering_angle", 0.4189); // ~24 degrees
-        this->declare_parameter("max_speed", 2.0);
+        this->declare_parameter("lookahead_distance", lookahead_distance_);
+        this->declare_parameter("max_steering_angle", lookahead_distance_); // ~24 degrees
+        this->declare_parameter("max_speed", max_speed_);
         this->declare_parameter("waypoints_file", std::getenv("HOME") + std::string("/sim_ws/way_point_logs/") + std::string(file_name));
 
         this->get_parameter("lookahead_distance", lookahead_distance_);

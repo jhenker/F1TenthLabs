@@ -29,7 +29,7 @@ class WaypointLogger(Node):
         self.get_logger().info('Saving waypoints to: ' + self.filepath)
 
         # Create a timer to call the logging function every 2 seconds
-        self.timer = self.create_timer(2.0, self.log_waypoint)
+        self.timer = self.create_timer(1.5, self.log_waypoint)
 
         # Variable to store the latest data
         self.latest_data = None

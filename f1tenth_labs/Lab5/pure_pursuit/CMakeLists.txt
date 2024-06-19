@@ -29,6 +29,11 @@ foreach(PACKAGE
 
 endforeach()
 
+install(DIRECTORY
+  launch
+  DESTINATION share/${PROJECT_NAME}
+)
+
 # Include Cpp "include" directory
 include_directories(include)
 include_directories(
