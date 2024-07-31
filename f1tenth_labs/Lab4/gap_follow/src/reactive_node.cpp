@@ -66,7 +66,8 @@ private:
 	min_dist = ranges[min_index];
 	
 	//zero out the array within the distance 
-	float one_index_increment = min_dist * sin(angle_increment);
+	float one_index_increment = min_dist * tan(angle_increment);
+	    //update from sin to tan. Tan gets the distance along the 
 	float cur_distance = 0.0;
 	int cur_index = 0;
 	while((cur_distance < (safety_bubble_size / 2.0)) && (size_t(min_index+cur_index) < ranges.size()) && (min_index-cur_index >= 0)){
